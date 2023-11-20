@@ -2,27 +2,31 @@ version: "3"
 
 services:
   vc-triton: 
-    image: nvcr.io/nvidia/tritonserver:21.10-py3
-    shm_size: '1gb' #<-- when RUNNING
+    image: nvcr.io/nvidia/tritonserver:22.10-py3
+    shm_size: '2gb' #<-- when RUNNING
     container_name: triton_multi_ensemble
     restart: unless-stopped
     networks:
       - vcnetwork
     hostname: vctriton
     ports:
-      - "8030-8032:8000-8002"
+      # - "8030-8032:8000-8002"
+      - 8030:8000
+      - 8031:8001
+      - 8032:8003
     environment:
       - HOME=/config # fix "Home directory not accessible: Permission denied docker" when calling espeak
     volumes:
       - ./hifi-gan:/hifi-gan
       - ./speaker_encoder:/speaker_encoder
-    command: bash -c "tritonserver --model-repository=/models --log-verbose 1"
+      - ./models:/models
+    command: bash -c "tritonserver --model-repository=/models/ --log-verbose 1"
     deploy:
       resources:
         reservations:
           devices:
             - driver: nvidia
-              count: 1
+              count: 0
               capabilities: [gpu]
 
 
@@ -32,13 +36,19 @@ services:
     restart: always
     networks:
       - vcnetwork
+    runtime: nvidia  # GPU 런타임 설정
     environment:
-      TRITON_URL: "vc-triton:8031"
+      - TRITON_URL="vc-triton:8000"
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    volumes:
+      - ./:/workspace
     ports:
       - 1513:1513
+      - 1900:1900
     depends_on:
       - "vc-triton"
-    command: bash -c "uvicorn filename:app --host 0.0.0.0  --port 1900 --workers 1"
+    command: bash -c "uvicorn api:app --host 0.0.0.0  --port 1900 --workers 1 --reload"
 
 
 

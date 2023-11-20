@@ -26,6 +26,15 @@ sys.path.append('speaker_encoder/')
 from encoder import inference as spk_encoder
 from pathlib import Path
 
+import torch
+from fastapi.responses import StreamingResponse
+import torchaudio
+from io import BytesIO
+
+
+import requests
+from dotenv import load_dotenv
+load_dotenv()
 
 use_gpu = torch.cuda.is_available()
 vc_path = 'checkpts/vc/vc_libritts_wodyn.pt' # path to voice conversion model
@@ -38,6 +47,7 @@ if use_gpu:
     generator = generator.cuda()
     generator.load_state_dict(torch.load(vc_path))
 else:
+    print("go cpu")
     generator.load_state_dict(torch.load(vc_path, map_location='cpu'))
 generator.eval()
 
@@ -52,6 +62,7 @@ if use_gpu:
     hifigan_universal = HiFiGAN(h).cuda()
     hifigan_universal.load_state_dict(torch.load(hfg_path + 'generator')['generator'])
 else:
+    print("go cpu")
     hifigan_universal = HiFiGAN(h)
     hifigan_universal.load_state_dict(torch.load(hfg_path + 'generator',  map_location='cpu')['generator'])
 
@@ -65,9 +76,6 @@ if use_gpu:
     spk_encoder.load_model(enc_model_fpath, device="cuda")
 else:
     spk_encoder.load_model(enc_model_fpath, device="cpu")
-# Define Inferencer 
-_inferencer = Inferencer(generator, spk_encoder, hifigan_universal, MEDIA_ROOT, True )
-
 
 # Make dir to save audio files log
 MEDIA_ROOT = os.path.join('/logs', 'media')
@@ -79,6 +87,11 @@ LOG_ROOT = os.path.join('/logs', 'json')
 if not os.path.exists(LOG_ROOT):
     os.makedirs(LOG_ROOT)
 
+
+# Define Inferencer 
+_inferencer = Inferencer(generator, spk_encoder, hifigan_universal, MEDIA_ROOT, True)
+
+
 def save_audio(file):
     job_id = str(uuid.uuid4())
     output_dir = os.path.join(MEDIA_ROOT, str(job_id))
@@ -89,8 +102,6 @@ def save_audio(file):
         file_object.write(file.file.read())
     
     return audio_save_path 
-    
-    
     
 
 app = FastAPI(
@@ -114,13 +125,44 @@ async def check_status(response: Response):
 
 
 @app.post('/convert', status_code=200)
-async def convert(response:Response, file1: UploadFile = File(...), file2: UploadFile = File(...) ):
+async def convert(response:StreamingResponse, file1: UploadFile = File(...), file2: UploadFile = File(...) ):
     # Save source and target to MEDIA 
     source_fpath = save_audio(file1)
+    print(source_fpath)
     target_fpath = save_audio(file2)
+    print(target_fpath)
     
-    audio = _inferencer.infer(src_path=audio_path, tgt_path=target_path, return_output_path=False)
+    waveform = _inferencer.infer(src_path=source_fpath, tgt_path=target_fpath, return_output_path=False)
     
-    return audio 
+    # Save the waveform as a BytesIO object
+    buffer = BytesIO()
+    torchaudio.save(buffer, waveform.view(1, -1), sample_rate=22050, format="wav")
     
+    # Set the headers and return the StreamingResponse
+    buffer.seek(0)
+    headers = {
+        'Content-Disposition': 'attachment; filename="generated_audio.wav"'
+    }
+    return StreamingResponse(buffer, media_type="audio/wav", headers=headers)
 
+
+# @app.post('/spk_enc', status_code=200)
+# async def spk_enc(response:StreamingResponse, file1: UploadFile = File(...)):
+#     source_fpath = save_audio(file1)
+#     # 오디오 파일 읽기
+#     with open(source_fpath, 'rb') as file:
+#         files = {'file': file}
+#         print(os.environ.get('TRITON_URL'))
+#         # response = requests.post(f"http://{os.environ.get('TRITON_URL')}/v2/models/spk_enc/infer", files=files)
+#         response = requests.post(f"http://host.docker.internal:8000/v2/models/spk_enc/infer", files=files)
+
+#     # 받은 스트림을 NumPy 배열로 변환
+#     if response.status_code == 200:
+#         audio_bytes = response.json()['data']
+#         audio_np = np.frombuffer(audio_bytes, dtype=np.int16)
+
+#         # 여기서 NumPy 배열로 된 오디오 데이터를 사용할 수 있음
+#         print(audio_np)
+#     else:
+#         print("Error:", response.text)
+#     return response
