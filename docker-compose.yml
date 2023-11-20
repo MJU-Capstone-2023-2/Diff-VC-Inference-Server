@@ -1,21 +1,6 @@
 version: "3"
 
 services:
-  vc-triton:
-    image: nvcr.io/nvidia/tritonserver:22.10-py3
-    runtime: nvidia
-    command: tritonserver --model-repository=/models
-    ports:
-      - "8000:8000"
-      - "8001:8001"
-      - "8002:8002"
-    volumes:
-      #- /full/path/to/docs/examples/model_repository:/models
-      - /home/uxm2/github/Diff-VC/model_exports:/models
-    environment:
-      - NVIDIA_VISIBLE_DEVICES=0  # 사용할 GPU 디바이스 번호를 지정합니다.
-    # 다른 설정을 필요로 하는 경우 아래에 추가적인 설정을 추가할 수 있습니다.
-
   vc-api:
     container_name: voice-conversion-api
     build: .
@@ -24,7 +9,6 @@ services:
       - vcnetwork
     runtime: nvidia  # GPU 런타임 설정
     environment:
-      - TRITON_URL=vc-triton:8000
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
@@ -32,9 +16,4 @@ services:
     ports:
       - 1513:1513
       - 1900:1900
-    depends_on:
-      - "vc-triton"
     command: bash -c "uvicorn api:app --host 0.0.0.0  --port 1900 --workers 1 --reload"
-
-networks:
-  vcnetwork:
